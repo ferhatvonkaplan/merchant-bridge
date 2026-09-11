@@ -1,0 +1,46 @@
+name: Merchant API project inquiry
+description: Describe the general scope of a custom connector migration.
+title: "Project inquiry: "
+labels: []
+body:
+  - type: markdown
+    attributes:
+      value: |
+        This inquiry is **public** and requires a GitHub account. Please share only a general project description.
+        Do not include passwords, API keys, account IDs, private logs, email addresses, customer records, or client-confidential information.
+        A scope inquiry does not create a contract or start a paid sprint.
+  - type: dropdown
+    id: connection
+    attributes:
+      label: Connection type
+      options:
+        - Custom Content API connector
+        - Custom connector, API version unknown
+        - Agency delivery partnership
+    validations:
+      required: true
+  - type: dropdown
+    id: catalog
+    attributes:
+      label: Approximate product count
+      options:
+        - Under 500 SKUs
+        - 500–5,000 SKUs
+        - More than 5,000 SKUs
+    validations:
+      required: true
+  - type: textarea
+    id: scope
+    attributes:
+      label: General scope
+      description: Describe the connector technology and the work you are considering. Keep identifying or confidential details private.
+      placeholder: "For example: a custom Python worker sends products for one market. We want to review a Merchant API migration."
+    validations:
+      required: true
+  - type: checkboxes
+    id: public-information
+    attributes:
+      label: Before submitting
+      options:
+        - label: I understand this inquiry is public and have not included credentials, personal information, or confidential client data.
+          required: true

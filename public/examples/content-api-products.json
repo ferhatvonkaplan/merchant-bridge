@@ -1,0 +1,51 @@
+[
+  {
+    "offerId": "DEMO-MUG-01",
+    "channel": "online",
+    "contentLanguage": "en",
+    "feedLabel": "US",
+    "title": "Demo ceramic mug",
+    "description": "Synthetic product for a local migration preview.",
+    "link": "https://example.com/products/demo-mug",
+    "imageLink": "https://example.com/images/demo-mug.jpg",
+    "availability": "in stock",
+    "condition": "new",
+    "brand": "Demo Brand",
+    "price": {
+      "value": "24.95",
+      "currency": "USD"
+    }
+  },
+  {
+    "offerId": "DEMO-TOTE-02",
+    "channel": "online",
+    "contentLanguage": "en",
+    "feedLabel": "GB",
+    "title": "Demo cotton tote",
+    "description": "Synthetic product for a local migration preview.",
+    "link": "https://example.com/products/demo-tote",
+    "imageLink": "https://example.com/images/demo-tote.jpg",
+    "availability": "out of stock",
+    "condition": "new",
+    "brand": "Demo Brand",
+    "price": {
+      "value": "19.00",
+      "currency": "GBP"
+    }
+  },
+  {
+    "offerId": "DEMO-REVIEW-03",
+    "channel": "online",
+    "contentLanguage": "en",
+    "feedLabel": "US",
+    "title": "Demo item with a broken price",
+    "description": "Intentional invalid input for the demo.",
+    "link": "https://example.com/products/demo-invalid",
+    "imageLink": "https://example.com/images/demo-invalid.jpg",
+    "availability": "in stock",
+    "price": {
+      "value": "not-a-price",
+      "currency": "USD"
+    }
+  }
+]
