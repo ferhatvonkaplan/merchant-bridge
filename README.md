@@ -4,6 +4,8 @@ A focused Merchant API migration service and a local product-mapping checker for
 
 The web app includes a scope assessment, downloadable migration brief, a Content API product checker, and a readiness checklist. The checker runs locally in the browser. It does not authenticate to Google, send product data, or modify Merchant Center accounts.
 
+Visit [Merchant Bridge](https://merchant-bridge-730335254425-0b0c6b89.s3.us-east-1.amazonaws.com/index.html). The hosted entry point includes `/index.html`.
+
 ## Development
 
 ```sh
@@ -13,14 +15,14 @@ npm run dev
 
 Local preview: `http://127.0.0.1:4173`.
 
-For a temporary shareable HTTPS demonstration of the production build, see [temporary preview instructions](docs/temporary-preview.md). Availability depends on the local preview processes; permanent AWS hosting is a separate deployment.
+The published S3 HTTPS site works independently of this computer. For an additional temporary demonstration of a local production build, see [temporary preview instructions](docs/temporary-preview.md).
 
 ```sh
 npx playwright install chromium
 npm run check
 ```
 
-`npm run check` runs the core tests, static-preview boundary tests, type check, production build, and browser tests. Browser coverage includes malformed input, review exports, scope qualification, mobile layout, and automated accessibility checks. Set `MERCHANT_BRIDGE_TEST_URL` to run the browser suite against an actual deployed preview instead of the development server.
+`npm run check` runs the core tests, deployment safety tests, static-preview boundary tests, type check, production build, and browser tests. Browser coverage includes malformed input, review exports, scope qualification, mobile layout, and automated accessibility checks. Set `MERCHANT_BRIDGE_TEST_URL` to the exact deployed entry point, including `/index.html` for S3, to run the browser suite against the hosted release.
 
 ## Product mapping boundaries
 
@@ -44,6 +46,8 @@ Fonts are self-hosted. The app uses no tracking cookies or analytics SDK.
 ## Deployment
 
 Build with `npm run build`. Only `dist/` belongs on the public web host. The AWS deployment utility is documented in [deployment notes](docs/deployment.md). AWS usage is billed by AWS; the script does not promise free hosting.
+
+The current release uses [S3 REST HTTPS hosting](docs/deployment-s3-rest.md). It publishes only explicit release object keys, grants no public listing or writing, and changes no account-wide permissions. CloudFront remains an optional, separate deployment mode.
 
 Local `sales/` and `artifacts/` folders are excluded from version control. They contain private prospect research, unsent drafts, screenshots, and deployment state; do not publish them.
 

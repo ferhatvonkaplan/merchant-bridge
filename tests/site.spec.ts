@@ -1,12 +1,18 @@
 import { test, expect } from "@playwright/test";
 import AxeBuilder from "@axe-core/playwright";
 
+// Object-storage hosting serves an explicit /index.html entry point.
+const home = process.env.MERCHANT_BRIDGE_TEST_URL || "/";
+
 test("sample checker maps valid products and blocks the deliberate data issue", async ({
   page,
 }) => {
   const errors: string[] = [];
   page.on("pageerror", (error) => errors.push(error.message));
-  await page.goto("/");
+  page.on("console", (message) => {
+    if (message.type() === "error") errors.push(message.text());
+  });
+  await page.goto(home);
   await expect(page.getByRole("heading", { level: 1 })).toContainText(
     "Merchant API",
   );
@@ -23,7 +29,7 @@ test("sample checker maps valid products and blocks the deliberate data issue", 
 test("invalid JSON clears any old result and produces a useful error", async ({
   page,
 }) => {
-  await page.goto("/");
+  await page.goto(home);
   await page.getByRole("button", { name: "Run sample check" }).click();
   await page.getByLabel("Content API product JSON").fill("{bad json");
   await page.getByRole("button", { name: "Run sample check" }).click();
@@ -37,7 +43,7 @@ test("invalid JSON clears any old result and produces a useful error", async ({
 test("export contains a review report and explicitly avoids claiming Google validation", async ({
   page,
 }) => {
-  await page.goto("/");
+  await page.goto(home);
   await page.getByRole("button", { name: "Run sample check" }).click();
   const event = page.waitForEvent("download");
   await page.getByRole("button", { name: "Export product review" }).click();
@@ -60,7 +66,7 @@ test("export contains a review report and explicitly avoids claiming Google vali
 test("integration assessment produces a conditional brief and working project-inquiry link", async ({
   page,
 }) => {
-  await page.goto("/");
+  await page.goto(home);
   await page
     .getByRole("button", { name: "Check your integration" })
     .first()
@@ -90,7 +96,7 @@ test("integration assessment produces a conditional brief and working project-in
 test("platform-managed connection is referred to its provider without a sales inquiry", async ({
   page,
 }) => {
-  await page.goto("/");
+  await page.goto(home);
   await page
     .getByRole("button", { name: "Check your integration" })
     .first()
@@ -112,7 +118,7 @@ test("out-of-scope catalog requires discovery and the public checklist is availa
   page,
   request,
 }) => {
-  await page.goto("/");
+  await page.goto(home);
   await page
     .getByRole("button", { name: "Check your integration" })
     .first()
@@ -132,7 +138,7 @@ test("mobile navigation, checker and dialog fit a narrow viewport", async ({
   page,
 }) => {
   await page.setViewportSize({ width: 390, height: 844 });
-  await page.goto("/");
+  await page.goto(home);
   await page.getByRole("button", { name: "Open navigation" }).click();
   await page
     .getByRole("navigation")
@@ -162,7 +168,7 @@ test("mobile navigation, checker and dialog fit a narrow viewport", async ({
 test("landing page has no serious or critical accessibility violations", async ({
   page,
 }) => {
-  await page.goto("/");
+  await page.goto(home);
   const results = await new AxeBuilder({ page })
     .withTags(["wcag2a", "wcag2aa", "wcag21aa"])
     .analyze();
@@ -174,7 +180,7 @@ test("landing page has no serious or critical accessibility violations", async (
 });
 
 test("assessment dialog remains accessible", async ({ page }) => {
-  await page.goto("/");
+  await page.goto(home);
   await page
     .getByRole("button", { name: "Check your integration" })
     .first()
@@ -192,7 +198,7 @@ test("assessment dialog remains accessible", async ({ page }) => {
 test("product results and the generated brief retain accessible contrast", async ({
   page,
 }) => {
-  await page.goto("/");
+  await page.goto(home);
   await page.getByRole("button", { name: "Run sample check" }).click();
   await page.locator(".product-result").last().locator("summary").click();
   const products = await new AxeBuilder({ page })

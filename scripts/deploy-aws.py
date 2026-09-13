@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Private S3 + CloudFront deployment. Read-only plan unless --apply is supplied.
+"""CloudFront or dedicated S3 REST HTTPS deployment; read-only without --apply.
 
 Python standard library + AWS CLI v2 only. No credentials are accepted or printed.
 Resource state is saved after each successful step; no cleanup runs on failure.
@@ -123,6 +123,110 @@ def load_state(path: Path, account: str):
     if not re.fullmatch(rf"merchant-bridge-{re.escape(account)}-[a-f0-9]{{8}}", state.get("bucket", "")):
         raise RuntimeError("Unexpected bucket name in deployment state.")
     return state
+
+
+def validate_hosting_mode(state, mode):
+    if state.get("hosting_mode") not in {None, "cloudfront", "s3-rest"}:
+        raise RuntimeError("Unrecognized hosting mode in deployment state.")
+    if mode == "cloudfront" and state.get("hosting_mode") == "s3-rest":
+        raise RuntimeError("This state hosts a live or pending S3 REST release. CloudFront mode is blocked before any mutation to avoid making its bucket private.")
+    if mode == "s3-rest":
+        references = ("oac_id", "distribution_id", "distribution_arn", "distribution_etag", "domain")
+        cf_steps = {"oac_identified", "oac_verified", "distribution_created", "distribution_recovered", "distribution_verified", "bucket_policy"}
+        if any(state.get(key) for key in references) or cf_steps.intersection(state.get("steps", {})):
+            raise RuntimeError("State references CloudFront resources or a CloudFront bucket policy. Review that existing deployment before selecting S3 REST; nothing will be changed.")
+
+
+def s3_rest_policy(state, keys):
+    keys = sorted(set(keys))
+    if not keys or any(not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._/-]*", key) or any(part in {"", ".", ".."} or part.startswith(".") for part in key.split("/")) for key in keys):
+        raise RuntimeError("Public release keys must be explicit safe paths, without wildcards, policy variables, hidden files or traversal.")
+    resources = [f"arn:aws:s3:::{state['bucket']}/{key}" for key in keys]
+    policy = {"Version": "2012-10-17", "Statement": [
+        {"Sid": "MerchantBridgeReleasedObjectsHttpsOnly", "Effect": "Allow", "Principal": "*", "Action": "s3:GetObject", "Resource": resources, "Condition": {"Bool": {"aws:SecureTransport": "true"}}},
+        {"Sid": "DenyHttpForMerchantBridgeReleasedObjects", "Effect": "Deny", "Principal": "*", "Action": "s3:GetObject", "Resource": resources, "Condition": {"Bool": {"aws:SecureTransport": "false"}}},
+    ]}
+    if len(json.dumps(policy).encode("utf-8")) > 20_480:
+        raise RuntimeError("Exact release-key policy would exceed S3's 20 KB bucket policy limit. Review the release manifest; no wildcard policy will be substituted.")
+    return policy
+
+
+def s3_rest_preflight(state, files):
+    """Read-only checks. This path cannot create buckets or change account controls."""
+    validate_hosting_mode(state, "s3-rest")
+    bucket, account = state["bucket"], state["account_id"]
+    parameters = {"bucket": bucket, "expected_bucket_owner": account}
+    aws("s3api", "head-bucket", **parameters)
+    location = aws("s3api", "get-bucket-location", **parameters).get("LocationConstraint")
+    if location not in {None, REGION}:
+        raise RuntimeError("Existing project bucket is not in us-east-1.")
+    tags = {tag["Key"]: tag["Value"] for tag in aws("s3api", "get-bucket-tagging", **parameters).get("TagSet", [])}
+    if tags.get("Project") != PROJECT or tags.get("ManagedBy") != "merchant-bridge-deploy":
+        raise RuntimeError("Existing bucket lacks the exact MerchantBridge deployment ownership tags.")
+    controls = aws("s3api", "get-bucket-ownership-controls", **parameters)
+    if controls.get("OwnershipControls", {}).get("Rules") != [{"ObjectOwnership": "BucketOwnerEnforced"}]:
+        raise RuntimeError("BucketOwnerEnforced is required. Ownership controls will not be changed by S3 REST mode.")
+    bpa = aws("s3api", "get-public-access-block", **parameters).get("PublicAccessBlockConfiguration", {})
+    if bpa.get("BlockPublicAcls") is not True or bpa.get("IgnorePublicAcls") is not True:
+        raise RuntimeError("Both bucket public ACL protections must already be enabled; review unexpected access settings first.")
+    try:
+        account_bpa = aws("s3control", "get-public-access-block", account_id=account).get("PublicAccessBlockConfiguration", {})
+    except AwsError as error:
+        if error.code != "NoSuchPublicAccessBlockConfiguration":
+            raise
+        account_bpa = {}
+    if account_bpa.get("BlockPublicPolicy") or account_bpa.get("RestrictPublicBuckets"):
+        raise RuntimeError("Account-level public-policy protections prohibit this hosting mode. The script will not change account settings.")
+    try:
+        current_policy = json.loads(aws("s3api", "get-bucket-policy", **parameters)["Policy"])
+    except AwsError as error:
+        if error.code != "NoSuchBucketPolicy":
+            raise
+        current_policy = None
+    accepted = [None, state.get("s3_rest_policy"), state.get("s3_rest_pending_policy")]
+    if current_policy not in accepted:
+        raise RuntimeError("Unexpected existing bucket policy. S3 REST mode will not overwrite a policy it did not checkpoint.")
+    if current_policy is None and state.get("s3_rest_policy"):
+        raise RuntimeError("A previously published bucket policy is missing. Review external changes before resuming.")
+    # Retain explicit prior releases for visitors with cached HTML. No arbitrary
+    # future key or customer object becomes public, and no object is deleted.
+    keys = sorted(set(state.get("s3_rest_released_keys", [])) | {key for key, _ in files})
+    policy = s3_rest_policy(state, keys)
+    expected_keys = set(keys) | set(state.get("uploads", {}))
+    inventory = aws("s3api", "list-objects-v2", **parameters)
+    unexpected_keys = sorted({item["Key"] for item in inventory.get("Contents", [])} - expected_keys)
+    if unexpected_keys:
+        raise RuntimeError(f"Project bucket contains unrelated objects; refusing to publish: {unexpected_keys[:5]}")
+    return {
+        "siteUrl": f"https://{bucket}.s3.{REGION}.amazonaws.com/index.html",
+        "publicKeys": keys, "policy": policy,
+        "bucketPublicAccessBlock": {"BlockPublicAcls": True, "IgnorePublicAcls": True, "BlockPublicPolicy": False, "RestrictPublicBuckets": False},
+        "currentBucketPublicAccessBlock": bpa,
+    }
+
+
+def s3_rest_apply(state, checkpoint, files, config, force, plan):
+    parameters = {"bucket": state["bucket"], "expected_bucket_owner": state["account_id"]}
+    state.update(hosting_mode="s3-rest", site_url=plan["siteUrl"])
+    checkpoint("s3_rest_mode_selected")
+    # The existing bucket remains enforced-ownership with ACL blocks enabled.
+    aws("s3api", "put-bucket-encryption", **parameters, server_side_encryption_configuration={"Rules": [{"ApplyServerSideEncryptionByDefault": {"SSEAlgorithm": "AES256"}}]})
+    checkpoint("s3_rest_encryption")
+    uploads(state, checkpoint, [(key, path) for key, path in files if key != "index.html"], config, force, "s3_rest_assets_uploaded")
+    # Checkpoint the planned exact policy before changing it. If the response is
+    # lost, a rerun accepts precisely this pending policy, never an unrelated one.
+    state["s3_rest_pending_policy"] = plan["policy"]
+    checkpoint("s3_rest_policy_prepared")
+    aws("s3api", "put-public-access-block", **parameters, public_access_block_configuration=plan["bucketPublicAccessBlock"])
+    checkpoint("s3_rest_bucket_public_policy_enabled")
+    aws("s3api", "put-bucket-policy", **parameters, policy=plan["policy"])
+    state["s3_rest_policy"] = plan["policy"]
+    state["s3_rest_released_keys"] = plan["publicKeys"]
+    state.pop("s3_rest_pending_policy", None)
+    checkpoint("s3_rest_policy_applied")
+    # Publish HTML only after its already-uploaded dependencies are public.
+    uploads(state, checkpoint, [(key, path) for key, path in files if key == "index.html"], config, force)
+    checkpoint("s3_rest_release_complete")
 
 
 def bucket_setup(state, checkpoint):
@@ -250,7 +354,7 @@ def policy_setup(state, checkpoint):
     checkpoint("bucket_policy")
 
 
-def uploads(state, checkpoint, files, config, force):
+def uploads(state, checkpoint, files, config, force, completion_step="uploads_complete"):
     # Upload assets first and HTML last so existing clients do not receive HTML
     # that refers to assets which have not been uploaded yet. Never delete old assets.
     ordered = sorted(files, key=lambda entry: (entry[0] == "index.html", entry[0]))
@@ -269,12 +373,13 @@ def uploads(state, checkpoint, files, config, force):
             aws("s3api", "put-object", bucket=state["bucket"], expected_bucket_owner=state["account_id"], key=key, body=str(source), content_type=mime, cache_control=cache, server_side_encryption="AES256")
             state["uploads"][key] = fingerprint
             checkpoint("upload:" + key)
-    checkpoint("uploads_complete")
+    checkpoint(completion_step)
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--apply", action="store_true", help="Create/update AWS resources and upload dist; absent means read-only plan.")
+    parser.add_argument("--hosting", choices=["cloudfront", "s3-rest"], default="cloudfront", help="S3 REST uses an existing tagged project bucket and explicit public HTTPS object keys. Default: cloudfront.")
     parser.add_argument("--dist", type=Path, default=ROOT / "dist")
     parser.add_argument("--state", type=Path, default=ROOT / "artifacts/aws-deployment.json")
     parser.add_argument("--force-upload", action="store_true", help="Reupload unchanged files if remote objects were removed or edited.")
@@ -284,12 +389,18 @@ def main():
     if not re.fullmatch(r"\d{12}", account):
         raise RuntimeError("AWS account ID is not a standard commercial-region account ID.")
     state_path = args.state.resolve()
+    if args.hosting == "s3-rest" and not state_path.is_file():
+        raise RuntimeError("S3 REST mode requires the existing dedicated project bucket/state; it does not create a bucket.")
     if not args.apply:
         state = load_state(state_path, account)
-        print(json.dumps({"mode": "plan", "account_id": account, "region": REGION, "bucket": state["bucket"] if state_path.exists() else "generated-and-persisted-on-apply", "existing_distribution": state.get("distribution_id"), "files": [key for key, _ in files], "state": str(state_path), "cost": "AWS usage charges apply; no free-service guarantee.", "next": "Review, then rerun with --apply."}, indent=2))
+        validate_hosting_mode(state, args.hosting)
+        hosting_plan = s3_rest_preflight(state, files) if args.hosting == "s3-rest" else {}
+        print(json.dumps({"mode": "plan", "hosting": args.hosting, "account_id": account, "region": REGION, "bucket": state["bucket"] if state_path.exists() else "generated-and-persisted-on-apply", "existing_distribution": state.get("distribution_id"), "files": [key for key, _ in files], "state": str(state_path), "cost": "AWS usage charges apply; no free-service guarantee.", "next": f"Review, then rerun with --hosting {args.hosting} --apply.", **hosting_plan}, indent=2))
         return
     with deployment_lock(state_path):
         state = load_state(state_path, account)
+        validate_hosting_mode(state, args.hosting)
+        hosting_plan = s3_rest_preflight(state, files) if args.hosting == "s3-rest" else None
         # Persist intended resource names before create calls, for crash recovery.
         save(state_path, state)
 
@@ -299,16 +410,24 @@ def main():
             print(f"Completed: {step}", file=sys.stderr)
 
         try:
-            bucket_setup(state, checkpoint)
-            oac_setup(state, checkpoint)
-            distribution_setup(state, checkpoint)
-            policy_setup(state, checkpoint)
-            uploads(state, checkpoint, files, config, args.force_upload)
+            if args.hosting == "s3-rest":
+                s3_rest_apply(state, checkpoint, files, config, args.force_upload, hosting_plan)
+            else:
+                state["hosting_mode"] = "cloudfront"
+                checkpoint("cloudfront_mode_selected")
+                bucket_setup(state, checkpoint)
+                oac_setup(state, checkpoint)
+                distribution_setup(state, checkpoint)
+                policy_setup(state, checkpoint)
+                uploads(state, checkpoint, files, config, args.force_upload)
         except Exception:
             # Keep the most recent successful state and all created resources.
             print(f"Deployment stopped. Resources were retained; rerun with the same state: {state_path}", file=sys.stderr)
             raise
-        print(json.dumps({"siteUrl": state["site_url"], "bucket": state["bucket"], "distributionId": state["distribution_id"], "distributionStatus": state["distribution_status"], "state": str(state_path), "note": "CloudFront provisioning may still be in progress. No invalidation was created."}, indent=2))
+        if args.hosting == "s3-rest":
+            print(json.dumps({"siteUrl": state["site_url"], "hosting": "s3-rest", "bucket": state["bucket"], "publicKeys": state["s3_rest_released_keys"], "state": str(state_path), "note": "Explicit HTTPS /index.html URL; bucket root is not a website index. No public listing/writing, account changes, or CloudFront resources."}, indent=2))
+        else:
+            print(json.dumps({"siteUrl": state["site_url"], "hosting": "cloudfront", "bucket": state["bucket"], "distributionId": state["distribution_id"], "distributionStatus": state["distribution_status"], "state": str(state_path), "note": "CloudFront provisioning may still be in progress. No invalidation was created."}, indent=2))
 
 
 if __name__ == "__main__":

@@ -10,8 +10,9 @@
     "preview:serve": "python3 scripts/serve-preview.py",
     "test": "tsx --test src/lib/*.test.ts",
     "test:preview": "python3 -m unittest discover -s tests -p 'test_preview_server.py' -v",
+    "test:deploy": "python3 -m unittest discover -s tests -p 'test_deploy_aws.py' -v",
     "test:e2e": "playwright test",
-    "check": "npm run test && npm run test:preview && npm run build && npm run test:e2e"
+    "check": "npm run test && npm run test:preview && npm run test:deploy && npm run build && npm run test:e2e"
   },
   "dependencies": {
     "@fontsource-variable/dm-sans": "^5.3.0",

@@ -1,5 +1,7 @@
 # Deploy Merchant Bridge to private S3 and CloudFront
 
+For a dedicated public bucket served through S3's HTTPS object endpoint, see [S3 REST deployment](deployment-s3-rest.md). That option uses `--hosting s3-rest` and does not require CloudFront permissions. The two hosting modes cannot be silently mixed in one deployment state.
+
 The deployment script is **prepared for operator review; preparation does not publish anything**. It requires Python 3, AWS CLI v2 and an already authenticated AWS profile/session. It does not accept, save or print AWS secret keys. There are no SDK dependencies.
 
 ## Architecture and charges
