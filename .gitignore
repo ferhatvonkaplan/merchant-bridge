@@ -8,3 +8,5 @@ playwright-report/
 artifacts/
 sales/
 .DS_Store
+__pycache__/
+*.pyc

@@ -13,12 +13,14 @@ npm run dev
 
 Local preview: `http://127.0.0.1:4173`.
 
+For a temporary shareable HTTPS demonstration of the production build, see [temporary preview instructions](docs/temporary-preview.md). Availability depends on the local preview processes; permanent AWS hosting is a separate deployment.
+
 ```sh
 npx playwright install chromium
 npm run check
 ```
 
-`npm run check` runs the core tests, type check, production build, and browser tests. Browser coverage includes malformed input, review exports, scope qualification, mobile layout, and automated accessibility checks.
+`npm run check` runs the core tests, static-preview boundary tests, type check, production build, and browser tests. Browser coverage includes malformed input, review exports, scope qualification, mobile layout, and automated accessibility checks. Set `MERCHANT_BRIDGE_TEST_URL` to run the browser suite against an actual deployed preview instead of the development server.
 
 ## Product mapping boundaries
 
